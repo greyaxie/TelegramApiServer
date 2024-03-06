@@ -1,4 +1,4 @@
-FROM xtrime/telegram-api-server:latest
+priblviteFROM xtrime/telegram-api-server:latest
 
 ADD docker/php/conf.d/. "$PHP_INI_DIR/conf.d/"
 
