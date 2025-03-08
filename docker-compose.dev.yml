@@ -1,11 +1,29 @@
 services:
   api:
+    extends:
+      file: docker-compose.base.yml
+      service: api
     image: xtrime/telegram-api-server:dev
     build:
       context: .
       dockerfile: Dockerfile-dev
+    volumes:
+      - ./dev/xdebug.ini:/usr/local/etc/php/conf.d/xdebug.ini
     ports:
       - "127.0.0.1:9503:9503"
       - "9003"
     environment:
       PHP_IDE_CONFIG: "serverName=Docker"
+    command:
+      - "-s=session"
+    depends_on:
+      - mysql
+  mysql:
+    extends:
+      file: docker-compose.base.yml
+      service: mysql
+    ports:
+      - "127.0.0.1:9507:3306"
+networks:
+  default:
+    name: telegram-api-server

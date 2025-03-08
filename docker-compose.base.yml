@@ -1,0 +1,37 @@
+services:
+  api:
+    image: xtrime/telegram-api-server:latest
+    init: true
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    volumes:
+      - ./:/app-host-link
+    working_dir: /app-host-link
+    depends_on:
+      - mysql
+    environment:
+      WAIT_HOSTS: mysql:3306
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1024k"
+        max-file: "2"
+    healthcheck:
+      test: timeout 15 curl -f http://localhost:9503/system/healthcheck || sh -c 'kill -INT -1 && (sleep 5; kill -s 9 -1)'
+      interval: 60s
+      timeout: 30s
+      retries: 1
+  mysql:
+    image: mariadb:11.4
+    restart: unless-stopped
+    volumes:
+      - ./.mysql:/var/lib/mysql
+    environment:
+      MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: 'yes'
+      MARIADB_AUTO_UPGRADE: 'yes'
+    command:
+      - --skip-grant-tables
+      - --innodb-buffer-pool-size=128M
+      - --wait_timeout=65

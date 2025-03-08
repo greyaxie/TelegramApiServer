@@ -14,17 +14,16 @@ use Revolt\EventLoop;
 use TelegramApiServer\Client;
 use TelegramApiServer\Config;
 use TelegramApiServer\Logger;
-use function sprintf;
+
 use const SIGINT;
+use const SIGQUIT;
 use const SIGTERM;
 
-class Server
+final class Server
 {
     /**
      * Server constructor.
      *
-     * @param array $options
-     * @param array|null $sessionFiles
      */
     public function __construct(array $options, ?array $sessionFiles)
     {
@@ -51,7 +50,6 @@ class Server
 
     }
 
-
     /**
      * Stop the server gracefully when SIGINT is received.
      * This is technically optional, but it is best to call Server::stop().
@@ -60,10 +58,10 @@ class Server
      */
     private static function registerShutdown(SocketHttpServer $server)
     {
-        if (defined('SIGINT')) {
+        if (\defined('SIGINT')) {
             // Await SIGINT or SIGTERM to be received.
-            $signal = Amp\trapSignal([SIGINT, SIGTERM]);
-            info(sprintf("Received signal %d, stopping HTTP server", $signal));
+            $signal = Amp\trapSignal([SIGINT, SIGTERM, SIGQUIT]);
+            info(\sprintf("Received signal %d, stopping HTTP server", $signal));
             $server->stop();
         } else {
             EventLoop::run();
@@ -73,16 +71,14 @@ class Server
     }
 
     /**
-     * Установить конфигурацию для http-сервера
+     * Установить конфигурацию для http-сервера.
      *
-     * @param array $config
-     * @return array
      */
     private function getConfig(array $config = []): array
     {
-        $config = array_filter($config);
+        $config = \array_filter($config);
 
-        $config = array_merge(
+        $config = \array_merge(
             Config::getInstance()->get('server', []),
             $config
         );
@@ -92,13 +88,25 @@ class Server
 
     public static function getClientIp(Request $request): string
     {
-        $remote = $request->getClient()->getRemoteAddress()->toString();
-        $hostArray = explode(':', $remote);
-        if (count($hostArray) >= 2) {
-            $port = (int)array_pop($hostArray);
-            if ($port > 0 && $port <= 65353) {
-                $remote = implode(':', $hostArray);
+        $realIpHeader = Config::getInstance()->get('server.real_ip_header');
+        if ($realIpHeader) {
+            $remote = $request->getHeader($realIpHeader);
+            if (!$remote) {
+                goto DIRECT;
             }
+            $tmp = \explode(',', $remote);
+            $remote = \trim(\end($tmp));
+        } else {
+            DIRECT:
+            $remote = $request->getClient()->getRemoteAddress()->toString();
+            $hostArray = \explode(':', $remote);
+            if (\count($hostArray) >= 2) {
+                $port = (int) \array_pop($hostArray);
+                if ($port > 0 && $port <= 65353) {
+                    $remote = \implode(':', $hostArray);
+                }
+            }
+
         }
 
         return $remote;

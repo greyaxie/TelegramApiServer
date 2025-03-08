@@ -29,6 +29,8 @@ docker compose pull
 ```
 
 ## Authorization
+Please only use old and valid accounts. All new accounts will be banned by telegram.
+If your account was banned read this: https://docs.madelineproto.xyz/docs/LOGIN.html#getting-permission-to-use-the-telegram-api
 1. Get app_id and app_hash at [my.telegram.org](https://my.telegram.org/). 
     Only one app_id needed for any amount of users and bots.
 1. Fill app_id and app_hash in `.env.docker`.
@@ -36,8 +38,11 @@ docker compose pull
         1. Start container interactively: `docker compose run --rm api`
         2. If you need to start multiple sessions, create docker-compose.override.yml. Add additional containers there. Use unique ports and session names in `command`.
 1. Authorize your session:
-    1. After promt fill your phone number, or bot hash.
-    1. Follow instructions
+    1. After promt, fill your phone number, or bot hash.
+    1. You will receive telegram code. Type it in.
+       If you're not receiving code - your server IP or hosting may be blocked by telegram. 
+       Try another server or change server IP.
+    1. If you have 2fa enabled - enter 2fa passord.
 1. Wait 10-30 seconds until session is started.
    You will see logs:
    ```text
@@ -58,85 +63,113 @@ docker compose pull
   docker compose up -d
   ```
 
-## Usage
-1. Run server/parser
-    ```
-    usage: php server.php [--help] [-a=|--address=127.0.0.1] [-p=|--port=9503] [-s=|--session=]  [-e=|--env=.env] [--docker]
-    
-    Options:
-            --help      Show this message
-            
-        -a  --address   Server ip (optional) (default: 127.0.0.1)
-                        To listen external connections use 0.0.0.0 and fill IP_WHITELIST in .env
-                        
-        -p  --port      Server port (optional) (default: 9503)
-        
-        -s  --session   Name for session file (optional)
-                        Multiple sessions can be specified: "--session=user --session=bot"
-                        
-                        Each session is stored in `sessions/{$session}.madeline`. 
-                        Nested folders supported.
-                        See README for more examples.
-    
-        -e  --env       .env file name. (default: .env). 
-                        Helpful when need multiple instances with different settings
-        
-            --docker    Apply some settings for docker: add docker network to whitelist.
-    
-    Also some options can be set in .env file (see .env.example)
-    ```
-1. Access Telegram API with simple GET/POST requests.
-    Regular and application/json POST supported.
-    It's recommended to use http_build_query, when using GET requests.
-    
-    **Rules:**
-    * All methods from MadelineProto supported: [Methods List](https://docs.madelineproto.xyz/API_docs/methods/)
-    * Url: `http://%address%:%port%/api[/%session%]/%class%.%method%/?%param%=%val%`
-    * <b>Important: api available only from ip in whitelist.</b> 
-        By default it is: `127.0.0.1`
-        You can add a client IP in .env file to `IP_WHITELIST` (separate with a comma)
-        
-        In docker version by default api available only from localhost (127.0.0.1).
-        To allow connections from the internet, need to change ports in docker-compose.yml to `9503:9503` and recreate the container: `docker compose up -d`. 
-        This is very insecure, because this will open TAS port to anyone from the internet. 
-        Only protection is the `IP_WHITELIST`, and there are no warranties that it will secure your accounts.
-    * If method is inside class (messages, contacts and etc.) use '.' to separate class from method: 
-        `http://127.0.0.1:9503/api/contacts.getContacts`
-    * If method requires array of values, use any name of array, for example 'data': 
-        `?data[peer]=@xtrime&data[message]=Hello!`. Order of parameters does't matter in this case.
-    * If method requires one or multiple separate parameters (not inside array) then pass parameters with any names but **in strict order**: 
-        `http://127.0.0.1:9503/api/getInfo/?id=@xtrime` or `http://127.0.0.1:9503/api/getInfo/?abcd=@xtrime` works the same
+## Security
+Please be careful with settings, otherwise you can expose your telegram session and lose control.
+Default settings allow to access API only from localhost/127.0.0.1.
 
-    **Examples:**
-    * get_info about channel/user: `http://127.0.0.1:9503/api/getInfo/?id=@xtrime`
-    * get_info about currect account: `http://127.0.0.1:9503/api/getSelf`
-    * repost: `http://127.0.0.1:9503/api/messages.forwardMessages/?data[from_peer]=@xtrime&data[to_peer]=@xtrime&data[id]=1234`
-    * get messages from channel/user: `http://127.0.0.1:9503/api/getHistory/?data[peer]=@breakingmash&data[limit]=10`
-    * get messages with text in HTML: `http://127.0.0.1:9503/api/getHistoryHtml/?data[peer]=@breakingmash&data[limit]=10`
-    * search: `http://127.0.0.1:9503/api/searchGlobal/?data[q]=Hello%20World&data[limit]=10`
-    * sendMessage: `http://127.0.0.1:9503/api/sendMessage/?data[peer]=@xtrime&data[message]=Hello!`
-    * copy message from one channel to another (not repost): `http://127.0.0.1:9503/api/copyMessages/?data[from_peer]=@xtrime&data[to_peer]=@xtrime&data[id][0]=1`
+.env settings:
+- `IP_WHITELIST` - allow specific IP's to make requests without password.
+- `PASSWORDS` - protect your api with basic auth.  
+  Request with correct username and password overrides IP_WHITELIST.
+  If you specify password, then `IP_WHITELIST` is ignored
+  How to make requests with basic auth: 
+  ```shell
+  curl --user username:password "http://127.0.0.1:9503/getSelf"
+  curl "http://username:password@127.0.0.1:9503/getSelf"
+  ```
+
+docker-compose.yml:
+- `port` - port forwarding rules from host to docker container.
+  Remove 127.0.0.1 to listen all interfaces and forward all requests to container.
+  Make sure to use IP_WHITELIST and/or PASSWORDS settings to protect your account.
+
+## Usage
+Access Telegram API with simple GET/POST requests.
+Regular and application/json POST supported.
+It's recommended to use http_build_query, when using GET requests.
+    
+**Rules:**
+* All methods from MadelineProto supported: [Methods List](https://docs.madelineproto.xyz/API_docs/methods/)
+* Url: `http://%address%:%port%/api[/%session%]/%class%.%method%/?%param%=%val%`
+* <b>Important: api available only from ip in whitelist.</b> 
+    By default it is: `127.0.0.1`
+    You can add a client IP in .env file to `IP_WHITELIST` (separate with a comma)
+    
+    In docker version by default api available only from localhost (127.0.0.1).
+    To allow connections from the internet, need to change ports in docker-compose.yml to `9503:9503` and recreate the container: `docker compose up -d`. 
+    This is very insecure, because this will open TAS port to anyone from the internet. 
+    Only protection is the `IP_WHITELIST`, and there are no warranties that it will secure your accounts.
+* If method is inside class (messages, contacts and etc.) use '.' to separate class from method: 
+    `http://127.0.0.1:9503/api/contacts.getContacts`
+* If method requires array of values, use any name of array, for example 'data': 
+    `?data[peer]=@xtrime&data[message]=Hello!`. Order of parameters does't matter in this case.
+* If method requires one or multiple separate parameters (not inside array) then pass parameters with any names but **in strict order**: 
+    `http://127.0.0.1:9503/api/getInfo/?id=@xtrime` or `http://127.0.0.1:9503/api/getInfo/?abcd=@xtrime` works the same
+
+**Examples:**
+* get_info about channel/user: `http://127.0.0.1:9503/api/getInfo/?id=@xtrime`
+* get_info about currect account: `http://127.0.0.1:9503/api/getSelf`
+* repost: `http://127.0.0.1:9503/api/messages.forwardMessages/?data[from_peer]=@xtrime&data[to_peer]=@xtrime&data[id]=1234`
+* get messages from channel/user: `http://127.0.0.1:9503/api/messages.getHistory/?data[peer]=@breakingmash&data[limit]=10`
+* get messages with text in HTML: `http://127.0.0.1:9503/api/getHistoryHtml/?data[peer]=@breakingmash&data[limit]=10`
+* search: `http://127.0.0.1:9503/api/searchGlobal/?data[q]=Hello%20World&data[limit]=10`
+* sendMessage: `http://127.0.0.1:9503/api/messages.sendMessage/?data[peer]=@xtrime&data[message]=Hello!`
+* copy message from one channel to another (not repost): `http://127.0.0.1:9503/api/copyMessages/?data[from_peer]=@xtrime&data[to_peer]=@xtrime&data[id][0]=1`
     
 ## Advanced features
 ### Get events/updates
 Telegram is event driven platform. For example:  every time your account receives a message you immediately get an update.
 There are multiple ways of [getting updates](https://docs.madelineproto.xyz/docs/UPDATES.html) in TelegramApiServer / MadelineProto:  
-    1. [Websocket](#eventhandler-updates-webhooks)  
-    2. Long Polling:   
-        send request to getUpdates endpoint  
-        `curl "127.0.0.1:9503/api/getUpdates?data[limit]=3&data[offset]=0&data[timeout]=10.0" -g`  
-    3. Webhook: 
-        Redirect all updates to your endpoint, just like bot api!  
-        `curl "127.0.0.1:9503/api/setWebhook?url=http%3A%2F%2Fexample.com%2Fsome_webhook" -g `  
-        Example uses urlencoded url in query.
+1. [Websocket](#eventhandler-updates-webhooks)  
+2. Long Polling:   
+send request to getUpdates endpoint  
+`curl "127.0.0.1:9503/api/getUpdates?data[limit]=3&data[offset]=0&data[timeout]=10.0" -g`  
+3. Webhook:
+Redirect all updates to your endpoint, just like bot api!  
+`curl "127.0.0.1:9503/api/setWebhook?url=http%3A%2F%2Fexample.com%2Fsome_webhook" -g `  
+Example uses urlencoded url in query.
 
 ### Uploading files.
 
 There are few options to upload and send media files:
-- Custom method `sendMedia` supports upload from form:
+
+- Custom method `sendVideo` to send video by url or local path, remote url, or stream.
+  RemoteUrl:
     ```shell script
-    curl "http://127.0.0.1:9503/api/sendMedia?data[peer]=xtrime&data[message]=Hello" -g \
-    -F "file=@/Users/xtrime/Downloads/test.txt"
+    curl --location --request POST 'http://127.0.0.1:9503/api/sendVideo' \
+    --header 'Content-Type: application/json' \
+    --data-raw '{
+        "data": {
+            "peer": "me",
+            "file": {
+                "_": "RemoteUrl",
+                "url": "https://domain.site/storage/video.mp4"
+            },
+            "parseMode": "HTML",
+            "caption": "<b>caption text</b>"
+        }
+    }'
+    ```
+  Stream upload from client:
+  ```shell script
+    curl --location --request POST 'http://127.0.0.1:9503/api/sendDocument/?data[peer]=me&data[caption]=hey' -g \
+    -F "file=@screenshot.png"
+    ```
+  Local file on server:
+   ```shell script
+    curl --location --request POST 'http://127.0.0.1:9503/api/sendDocument' \
+    --header 'Content-Type: application/json' \
+    --data-raw '{
+        "data": {
+            "peer": "me",
+            "file": {
+                "_": "LocalUrl",
+                "file": "faust.txt"
+            },
+            "parseMode":  "HTML",
+            "caption": "<b>caption text</b>"
+        }
+    }'
     ```
 - use custom `uploadMediaForm` method and then pass result to `messages.sendMedia`:
     1. `curl "http://127.0.0.1:9503/api/uploadMediaForm" -g -F "file=@/Users/xtrime/Downloads/test.txt"`
@@ -148,7 +181,7 @@ There are few options to upload and send media files:
     --header 'Content-Type: application/json' \
     --data-raw '{
         "data":{
-            "peer": "@xtrime",
+            "peer": "me",
             "media": {
                 "_": "inputMediaUploadedDocument",
                 "file": {
@@ -205,9 +238,35 @@ curl --location --request POST '127.0.0.1:9503/api/downloadToResponse' \
 Also see: https://docs.madelineproto.xyz/docs/FILES.html#downloading-files
 
 ### Multiple sessions support
-**WARNING: running multiple sessions in one instance is unstable.**
+Its recommended to run every session in separate container. 
+
+To add more containers create `docker-compose.override.yml` file.
+Docker will [automatically merge](https://docs.docker.com/compose/multiple-compose-files/merge/) it with default docker-compose file.
+
+Example of `docker-compose.override.yml` with two additional containers/sessions (3 in total):
+```yaml
+services:
+    api-2:
+        extends:
+            file: docker-compose.base.yml
+            service: base-api
+        ports:
+            - "127.0.0.1:9512:9503"
+        command:
+            - "-s=session-2"
+    api-3:
+        extends:
+            file: docker-compose.base.yml
+            service: base-api
+        ports:
+            - "127.0.0.1:9513:9503"
+        command:
+            - "-s=session-3"
+
+```
+### Multiple sessions in one container (deprecated)
+**WARNING: running multiple sessions in one instance/container is unstable.**
 Crash/error in one session will crash all of them.
-Correct way: override docker-compose.yml and add containers with different ports and session names for each session.
 
 When running  multiple sessions, need to define which session to use for request.
 Each session stored in `sessions/{$session}.madeline`. Nested folders supported.
@@ -265,10 +324,10 @@ Each session stored in `sessions/{$session}.madeline`. Nested folders supported.
 **Examples:**
 * Session list: `http://127.0.0.1:9503/system/getSessionList`
 * Adding session: `http://127.0.0.1:9503/system/addSession?session=users/xtrime`
-* Removing session (session file will remain): `http://127.0.0.1:9503/system/removeSession?session=users/xtrime`
-  Due to madelineProto issue its instance still might be in memory and continue working even after the remove.
-* Remove session file: `http://127.0.0.1:9503/system/unlinkSessionFile?session=users/xtrime`
-    Don`t forget to logout and call removeSession first!
+* ~~Removing session (session file will remain): `http://127.0.0.1:9503/system/removeSession?session=users/xtrime`
+  Due to madelineProto issue its instance still might be in memory and continue working even after the remove.~~
+* ~~Remove session file: `http://127.0.0.1:9503/system/unlinkSessionFile?session=users/xtrime`
+    Don`t forget to logout and call removeSession first!~~
 * Close TelegramApiServer (end process): `http://127.0.0.1:9503/system/exit`
 
 Full list of system methods available in [SystemApiExtensions class](https://github.com/xtrime-ru/TelegramApiServer/blob/master/src/MadelineProtoExtensions/SystemApiExtensions.php)
@@ -324,7 +383,6 @@ PHP websocket client example: [websocket-events.php](https://github.com/xtrime-r
 TelegramApiServer extends madelineProto with some handful methods.   
 Full list of custom methods and their parameters available in [ApiExtensions class](https://github.com/xtrime-ru/TelegramApiServer/blob/master/src/MadelineProtoExtensions/ApiExtensions.php#L19)
 
-* `getHistory` - same as messages.getHistory, but all params exept peer is optional.
 * `getHistoryHtml` - message entities converted to html
 * `formatMessage` - converts entities to html
 * `copyMessages` - copy message from one peer to onother. Like forwardMessages, but without the link to original.

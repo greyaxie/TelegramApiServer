@@ -3,10 +3,27 @@
 use danog\MadelineProto\Logger;
 use TelegramApiServer\EventObservers\LogObserver;
 
+use function Amp\Socket\SocketAddress\fromString;
+
 $settings = [
     'server' => [
         'address' => (string)getenv('SERVER_ADDRESS'),
         'port' => (int)getenv('SERVER_PORT'),
+        'real_ip_header' => (string)(getenv('REAL_IP_HEADER') ?? ''),
+    ],
+    'error' => [
+        'bot_token' => (string)getenv('ERROR_NOTIFICATION_BOT_TOKEN'),
+        'peers' => array_filter(
+            array_map(
+                static function (string $peer): string|int {
+                    $peer = trim($peer);
+                    return is_numeric($peer) ? (int)$peer : $peer;
+                },
+                explode(',', (string)getenv('ERROR_NOTIFICATION_PEERS'))
+            ),
+        ),
+        'prefix' => (string)getenv('ERROR_NOTIFICATION_PREFIX'),
+        'resume_on_error' => ((bool)getenv('RESUME_ON_ERROR'))
     ],
     'telegram' => [
         'app_info' => [ // obtained in https://my.telegram.org
@@ -20,7 +37,7 @@ $settings = [
         ],
         'rpc' => [
             'flood_timeout' => 5,
-            'rpc_drop_timeout' => 11,
+            'rpc_drop_timeout' => 20,
         ],
         'connection' => [
             'max_media_socket_count' => 10,
@@ -28,9 +45,9 @@ $settings = [
                 '\danog\MadelineProto\Stream\Proxy\SocksProxy' => [
                     [
                         "address" => (string)getenv('TELEGRAM_PROXY_ADDRESS'),
-                        "port"=> (int)getenv('TELEGRAM_PROXY_PORT'),
-                        "username"=> (string)getenv('TELEGRAM_PROXY_USERNAME'),
-                        "password"=> (string)getenv('TELEGRAM_PROXY_PASSWORD'),
+                        "port" => (int)getenv('TELEGRAM_PROXY_PORT'),
+                        "username" => (string)getenv('TELEGRAM_PROXY_USERNAME'),
+                        "password" => (string)getenv('TELEGRAM_PROXY_PASSWORD'),
                     ],
                 ]
             ]
@@ -55,7 +72,12 @@ $settings = [
         ],
         'files' => [
             'report_broken_media' => false,
+            'download_parallel_chunks' => 20,
         ],
+        'metrics' => [
+            'enable_prometheus_collection' => (bool)getenv("PROMETHEUS_ENABLE"),
+            'metrics_bind_to' => (bool)getenv("PROMETHEUS_ENABLE") ? fromString((string)getenv("PROMETHEUS_BIND_TO")) : null,
+        ]
     ],
     'api' => [
         'ip_whitelist' => array_filter(
@@ -64,13 +86,9 @@ $settings = [
                 explode(',', (string)getenv('IP_WHITELIST'))
             )
         ),
+        'passwords' => (array)json_decode((string)getenv('PASSWORDS'), true),
         'bulk_interval' => (float)getenv('REQUESTS_BULK_INTERVAL')
     ],
-    'health_check' => [
-        'enabled' => (bool)filter_var((string)getenv('HEALTHCHECK_ENABLED'), FILTER_VALIDATE_BOOL),
-        'interval' => ((int)getenv('HEALTHCHECK_INTERVAL') ?: 30),
-        'timeout' => ((int)getenv('HEALTHCHECK_REQUEST_TIMEOUT') ?: 60),
-    ]
 ];
 
 if (empty($settings['telegram']['connection']['proxies']['\danog\MadelineProto\Stream\Proxy\SocksProxy'][0]['address'])) {

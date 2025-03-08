@@ -2,11 +2,14 @@
 
 namespace TelegramApiServer\Migrations;
 
-class StartUpFixes
+use danog\MadelineProto\Magic;
+
+final class StartUpFixes
 {
     public static function fix(): void
     {
-        define('MADELINE_WORKER_TYPE', 'madeline-ipc');
+        \define('MADELINE_WORKER_TYPE', 'madeline-ipc');
+        Magic::$isIpcWorker = true;
     }
 
     public static function removeBrokenIpc(string $session): void

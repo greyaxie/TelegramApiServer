@@ -1,32 +1,37 @@
-FROM php:8.3-cli
+FROM php:8.4-cli-alpine
 
-RUN apt-get update && apt-get upgrade -y
-RUN true \
-    # Install main extension
-    && apt-get install procps git zip vim libzip-dev libgmp-dev libevent-dev libssl-dev libnghttp2-dev libffi-dev libicu-dev libonig-dev libxml2-dev libpng-dev -y \
-    && docker-php-ext-install -j$(nproc) sockets bcmath mysqli pdo_mysql pcntl ffi intl gmp zip gd \
-    # Install additional extension
-    && mkdir -p /usr/src/php/ext/ && cd /usr/src/php/ext/ \
-    && pecl bundle ev-beta && pecl bundle eio-beta && pecl bundle igbinary \
-    && docker-php-ext-install -j$(nproc) ev eio igbinary \
-    # Install PrimeModule for AuthKey generation speedup
-    && git clone https://github.com/danog/PrimeModule-ext \
-    && cd PrimeModule-ext && make -j$(nproc) \
-    && make install \
-    && cd ../  \
-    && rm -rf PrimeModule-ext/ \
-    # Install composer
-    && curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer \
-    # Cleanup
-    && docker-php-source delete \
-    && apt-get autoremove --purge -y && apt-get autoclean -y && apt-get clean -y \
-    && rm -rf /usr/src
+RUN apk add --no-cache make g++ && \
+    curl -sSLf https://github.com/danog/PrimeModule-ext/archive/refs/tags/2.0.tar.gz | tar -xz && \
+    cd PrimeModule-ext-2.0 && \
+    make -j$(nproc) && \
+    make install && \
+    cd .. && \
+    rm -r PrimeModule-ext-2.0 && \
+    apk del make g++
 
-ADD https://github.com/ufoscout/docker-compose-wait/releases/download/2.9.0/wait /usr/local/bin/docker-compose-wait
-RUN chmod +x /usr/local/bin/docker-compose-wait
+ADD https://github.com/mlocati/docker-php-extension-installer/releases/latest/download/install-php-extensions /usr/local/bin/
 
-ADD docker/php/conf.d/. "$PHP_INI_DIR/conf.d/"
+RUN chmod +x /usr/local/bin/install-php-extensions && \
+    install-php-extensions pcntl uv-beta ffi pgsql memprof intl gmp mbstring pdo_mysql xml dom iconv zip igbinary gd && \
+    rm /usr/local/bin/install-php-extensions
+
+RUN apk add --no-cache ffmpeg nghttp2 jemalloc
+
+ENV LD_PRELOAD=libjemalloc.so.2
+
+STOPSIGNAL SIGTERM
+
+RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+
+COPY --from=ghcr.io/ufoscout/docker-compose-wait:latest /wait /usr/local/bin/docker-compose-wait
+
+RUN echo 1.0.0 > /tas_version
+
+ADD docker/php/php.ini $PHP_INI_DIR/php.ini
 
 EXPOSE 9503
+
+ENV UV_USE_IO_URING=0
+STOPSIGNAL SIGTERM
 
 ENTRYPOINT ["./entrypoint.sh"]

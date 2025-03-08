@@ -2,19 +2,25 @@
 
 namespace TelegramApiServer;
 
+use Amp\Future\UnhandledFutureError;
+use Amp\SignalException;
+use Amp\Sql\SqlException;
+use Amp\Sync\LocalKeyedMutex;
 use danog\MadelineProto\API;
 use danog\MadelineProto\APIWrapper;
+use danog\MadelineProto\SecurityException;
 use danog\MadelineProto\Settings;
 use danog\MadelineProto\Settings\Database\SerializerType;
 use danog\MadelineProto\SettingsAbstract;
 use InvalidArgumentException;
 use Psr\Log\LogLevel;
 use ReflectionProperty;
+use Revolt\EventLoop;
 use RuntimeException;
 use TelegramApiServer\EventObservers\EventHandler;
 use TelegramApiServer\EventObservers\EventObserver;
 
-class Client
+final class Client
 {
     public static Client $self;
     /** @var API[] */
@@ -22,15 +28,17 @@ class Client
 
     public static function getInstance(): Client
     {
-        if (empty(static::$self)) {
-            static::$self = new static();
+        if (empty(self::$self)) {
+            self::$self = new static();
         }
-        return static::$self;
+        return self::$self;
     }
 
     public function connect(array $sessionFiles)
     {
         warning(PHP_EOL . 'Starting MadelineProto...' . PHP_EOL);
+
+        $this->setFatalErrorHandler();
 
         foreach ($sessionFiles as $file) {
             $sessionName = Files::getSessionName($file);
@@ -40,15 +48,19 @@ class Client
 
         $this->startNotLoggedInSessions();
 
-        $sessionsCount = count($sessionFiles);
+        $sessionsCount = \count($sessionFiles);
         warning(
             "\nTelegramApiServer ready."
             . "\nNumber of sessions: {$sessionsCount}."
         );
     }
 
+    private static LocalKeyedMutex $mutex;
+
     public function addSession(string $session, array $settings = []): API
     {
+        self::$mutex ??= new LocalKeyedMutex();
+        $lock = self::$mutex->acquire($session);
         if (isset($this->instances[$session])) {
             throw new InvalidArgumentException('Session already exists');
         }
@@ -58,8 +70,8 @@ class Client
         if ($settings) {
             Files::saveSessionSettings($session, $settings);
         }
-        $settings = array_replace_recursive(
-            (array)Config::getInstance()->get('telegram'),
+        $settings = \array_replace_recursive(
+            (array) Config::getInstance()->get('telegram'),
             Files::getSessionSettings($session),
         );
 
@@ -87,14 +99,9 @@ class Client
             $instance->unsetEventHandler();
         }
         unset($instance);
-        gc_collect_cycles();
+        \gc_collect_cycles();
     }
 
-    /**
-     * @param string|null $session
-     *
-     * @return API
-     */
     public function getSession(?string $session = null): API
     {
         if (!$this->instances) {
@@ -104,8 +111,8 @@ class Client
         }
 
         if (!$session) {
-            if (count($this->instances) === 1) {
-                $session = (string)array_key_first($this->instances);
+            if (\count($this->instances) === 1) {
+                $session = (string) \array_key_first($this->instances);
             } else {
                 throw new InvalidArgumentException(
                     'Multiple sessions detected. Specify which session to use. See README for examples.'
@@ -142,11 +149,7 @@ class Client
     public function startLoggedInSession(string $sessionName): void
     {
         if ($this->instances[$sessionName]->getAuthorization() === API::LOGGED_IN) {
-            if (
-                $this->instances[$sessionName]->getEventHandler() instanceof \__PHP_Incomplete_Class
-            ) {
-                $this->instances[$sessionName]->unsetEventHandler();
-            }
+            EventHandler::cachePlugins(EventHandler::class);
             $this->instances[$sessionName]->start();
             $this->instances[$sessionName]->echo("Started session: {$sessionName}\n");
         }
@@ -160,9 +163,10 @@ class Client
         return $wrapper;
     }
 
-    private static function getSettingsFromArray(string $session, array $settings, SettingsAbstract $settingsObject = new Settings()): SettingsAbstract {
+    private static function getSettingsFromArray(string $session, array $settings, SettingsAbstract $settingsObject = new Settings()): SettingsAbstract
+    {
         foreach ($settings as $key => $value) {
-            if (is_array($value) && $key !== 'proxies') {
+            if (\is_array($value) && $key !== 'proxies') {
                 if ($key === 'db' && isset($value['type'])) {
                     $type = match ($value['type']) {
                         'memory' => new Settings\Database\Memory(),
@@ -180,23 +184,111 @@ class Client
                     }
 
                     unset($value[$value['type']], $value['type'],);
-                    if (count($value) === 0) {
+                    if (\count($value) === 0) {
                         continue;
                     }
                 }
 
-                $method = 'get' . ucfirst(str_replace('_', '', ucwords($key, '_')));
+                $method = 'get' . \ucfirst(\str_replace('_', '', \ucwords($key, '_')));
                 self::getSettingsFromArray($session, $value, $settingsObject->$method());
             } else {
-                if ($key === 'serializer' && is_string($value)) {
+                if ($key === 'serializer' && \is_string($value)) {
                     $value = SerializerType::from($value);
                 }
-                $method = 'set' . ucfirst(str_replace('_', '', ucwords($key, '_')));
+                $method = 'set' . \ucfirst(\str_replace('_', '', \ucwords($key, '_')));
                 $settingsObject->$method($value);
             }
         }
         return $settingsObject;
     }
 
+    private function setFatalErrorHandler(): void
+    {
 
+        $token = Config::getInstance()->get('error.bot_token');
+        $peers = Config::getInstance()->get('error.peers');
+        $prefix = Config::getInstance()->get('error.prefix');
+        $resume = Config::getInstance()->get('error.resume_on_error');
+
+        $currentHandler = EventLoop::getErrorHandler();
+        EventLoop::setErrorHandler(static fn (\Throwable $e) => self::errorHandler($e, $currentHandler, $token, $peers, $prefix, $resume));
+    }
+
+    private static function errorHandler(\Throwable $e, ?callable $currentHandler, string $token, array $peers, string $prefix, bool $resume): void
+    {
+        if ($e instanceof UnhandledFutureError) {
+            $e = $e->getPrevious();
+        }
+
+        if ($currentHandler) {
+            $currentHandler($e);
+        }
+        if ($e->getPrevious()) {
+            self::errorHandler($e->getPrevious(), $currentHandler, $token, $peers, $prefix, true);
+        }
+        if ($peers && $token) {
+            try {
+                $ch = \curl_init("https://api.telegram.org/bot$token/sendMessage");
+                \curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'POST');
+                \curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+                \curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+
+                \curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 1);
+                \curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+
+                $encoded = function (string $input): string {
+                    return str_replace(['<', '>', '&'], ['&lt;', '&gt;', '&amp;'], $input);
+                };
+
+                foreach ($peers as $peer) {
+                    $exceptionArray = Logger::getExceptionAsArray($e);
+                    unset($exceptionArray['previous_exception']);
+
+                    $text = <<<HTML
+                        $prefix
+                        message: {$encoded($e->getMessage())}
+                        
+                        <pre>
+                            <code class="json">
+                            {$encoded(\json_encode($exceptionArray, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT))}
+                            </code>
+                        </pre>
+                        HTML
+                    ;
+                    \curl_setopt($ch, CURLOPT_POSTFIELDS, \json_encode([
+                        'chat_id' => $peer,
+                        'text' => trim($text),
+                        'parse_mode' => 'html',
+                    ]));
+
+                    $response = \curl_exec($ch);
+                    $responseJson = \json_decode($response, true);
+                    if (\curl_getinfo($ch, CURLINFO_HTTP_CODE) !== 200 || $responseJson['ok'] !== true) {
+                        Logger::getInstance()->error('Error notification bot response', [
+                            'status' => \curl_getinfo($ch, CURLINFO_HTTP_CODE),
+                            'response' => $responseJson ?: $response,
+                            'curl_error' => [
+                                'code' => \curl_errno($ch),
+                                'message' => \curl_error($ch),
+                            ],
+                        ]);
+                    }
+
+                }
+            } catch (\Throwable $curlException) {
+                Logger::getInstance()->error($curlException);
+            }
+        }
+
+        if (!$resume) {
+            throw $e;
+        } else {
+            if ($e instanceof SecurityException || $e instanceof SignalException || $e instanceof SqlException) {
+                throw $e;
+            }
+            if (str_starts_with($e->getMessage(), 'Could not connect to DC ')) {
+                throw $e;
+            }
+        }
+    }
 }
